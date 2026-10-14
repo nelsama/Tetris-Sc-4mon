@@ -5,6 +5,11 @@ Guía práctica para **arrancar un juego nuevo** en el Core de Vídeo (`vc`), cc
 → causa → solución**. Los ejemplos concretos (colores, nombres de sprites, etc.)
 son solo ilustraciones: adáptalos a tu juego.
 
+> 📚 **Documento vivo.** Esta guía **crece con cada proyecto**: cuando tropieces
+> con algo que no esté aquí, **añade una entrada** siguiendo el formato
+> *síntoma → causa → solución* (con un ejemplo real si lo tienes). Cuanto más
+> concreta sea la trampa, más útil le será al siguiente que la pise.
+
 ---
 
 ## 1. Puesta en marcha del proyecto
@@ -110,6 +115,17 @@ donde el tile es transparente (índice 0) y en el margen de pantalla. Si usas la
   "fondo/margen".
 - Los **sprites no se ven afectados** (usan banco de paleta aparte).
 
+> **Trampa del "yo también escribo la entrada 15":** `vc_set_bgcolor(...)` y
+> `vc_pal_set_bg(3, 3, ...)` **escriben la misma entrada 15**. Si llamas a las
+> dos, **la última gana** y verás "cambios que no cuajan" (p. ej. el fondo se
+> vuelve amarillo sin que toques el código de fondo). Decide **una** fuente de
+> verdad para el fondo y no mezcles ambas.
+
+> **Ejemplo real:** el cielo se veía amarillo porque el arranque fijaba el
+> BG_COLOR azul con `vc_set_bgcolor`, pero luego se programaba la paleta 3 para
+> piezas/UI pisando la entrada 15. La solución fue dejar cielo y pozo como tiles
+> **transparentes** y no tocar el color 3 de la paleta 3.
+
 ### 2.6 `vc_clear_vram()` borra los PATRONES (recarga la fuente)
 `vc_clear_vram()` usa el setup por hardware: limpia tilemap, atributos, OAM y
 **borra los patrones**, y **vuelve a expandir la fuente** `$20-$7F` (~120-275 µs).
@@ -128,6 +144,28 @@ vc_set_bgcolor(...);    /* fondo */
 /* cargar paletas, cargar patrones, dibujar el mundo/UI */
 vc_wait_vblank_end();
 ```
+
+### 2.8 Importar arte: el `uint32_t` del Piskel es `0xAABBGGRR`, no ARGB
+Al convertir arte (Piskel y similares) a patrones, **no asumas el orden de
+bytes**. Un `.piskel` exportado a código usa el empaquetado
+**`0xAABBGGRR`** (alpha, azul, verde, rojo), **canal rojo en el byte bajo**.
+Interpretarlo como `0xAARRGGBB` **invierte rojo y azul** y cambia *todos* los
+colores.
+
+- Verifica con **un color inequívoco**: `0xff0000ff` es **rojo** (byte bajo = FF)
+  en `AABBGGRR`; si lo ves azul, estás usando el orden equivocado.
+- Al montar la **tabla color → índice**, no adivines: mapea cada `uint32_t`
+  **exacto** que aparece en el asset (incluido el "fondo" del dibujo, que suele
+  mapearse a índice 0 = transparente).
+
+> **Ejemplo real:** las torres salían con los colores cambiados porque el color
+> `0xffa60100` (el azul del fondo del frame) se interpretaba como naranja. Con el
+> orden `AABBGGRR` correcto, `0xffa60100` es **azul → índice 0 (transparente)**, y
+> el naranja del sprite se recuperó desde `0xff004de1`.
+
+> **Tip de validación:** genera con la herramienta una imagen de referencia
+> (`.ppm`) y **compárala a ojo** contra el diseño; un color cambiado salta a la
+> vista antes de cargar nada en hardware.
 
 ---
 
@@ -187,6 +225,22 @@ hardware ignoraba el tile). Se corrigió en la librería.
 > tu código/librería escribe X bien. Un byte mal pasado puede parecer un bug de HW.
 > Mantén la librería actualizada y prueba casos simples de forma aislada.
 
+### 3.6 El VBLANK NO se puede anidar
+La sección crítica `vc_wait_vblank()` … `vc_wait_vblank_end()` **no es
+reentrante**: si llamas a `vc_wait_vblank()` estando ya dentro de un frame
+abierto, o **esperas otro VBLANK antes de cerrar el actual**, todo el dibujo sale
+partido/en preditable.
+
+**Regla:** una sola pareja `wait_vblank`/`wait_vblank_end` por frame, y **nada
+que abra su propio VBLANK debe llamarse desde dentro de la sección crítica**.
+Sacálo fuera.
+
+> **Ejemplo real:** la animación de "línea completada" (que parpadea durante
+> varios frames, con su propio bucle de VBLANK) se llamaba desde dentro del
+> `lock`, que a su vez estaba dentro del VBLANK del game loop. El resultado era
+> impredecible. La solución: **terminar el VBLANK del game loop primero** y
+> ejecutar el lock + la animación **fuera** de él.
+
 ---
 
 ## 4. Entrada y HUD / texto
@@ -215,6 +269,32 @@ Un valor fijo escrito de golpe puede romper otro periférico.
 
 > **Ejemplo:** el registro de configuración del puerto GPIO se escribía con RMW
 > para no tocar los bits de un display TM1638 que compartía el mismo registro.
+
+### 4.5 Si te quedas sin RAM, AMPLÍA el mapa (no recortes el juego)
+El mapa por defecto da `RAM = $0800-$3DFF` (~13.5 KB). Cuando el juego crece
+(sobre todo **cadenas de texto**), el linker puede no caber y no siempre avisa
+con un error claro.
+
+**Antes de empezar a optimizar a mano**, comprueba el margen real y **amplía la
+RAM moviendo solo el stack**:
+
+```ld
+/* programa.cfg: subir el stack libera RAM para el programa */
+__STACKSTART__: value = $3FFD;         /* antes $3EFF, etc. */
+RAM:   start = $0800, size = $379F;    /* $0800-$3F9F */
+STACK: start = $3FA0, size = $005E;    /* $3FA0-$3FFD */
+```
+
+- Recuerda **actualizar `startup.s`** si el stack cambia de sitio.
+- **No pises el flag de AUTOBOOT del monitor** (`$3FFE-$3FFF`) ni la ZP del
+  monitor (`$02-$1F`).
+- Verifica en `output/game.map` cuánto ocupa cada segmento y cuánto margen
+  queda.
+
+> **Ejemplo real:** tras añadir el menú de dificultad y varias cadenas, el juego
+> desbordaba `$3DFF` por 65-138 bytes. En vez de recortar el texto, se subió la
+> RAM a `$3F9F` y el stack a `$3FA0-$3FFD` (igual que hace el proyecto
+> `SpaceInvaders`).
 
 ---
 
@@ -256,7 +336,7 @@ contador de arranques.
 ## 6. Depuración: orden de sospechas
 
 1. **¿Compila/enlaza?** Revisa `output/game.map`: tamaños de segmentos y que no
-   desborde la RAM (`$0800-$3DFF`).
+   desborde la RAM (`$0800-$3F9F`; ver §4.5 si te quedas corto).
 2. **¿No se ve un tile?** índice fuera de rango; dibujo en `$20-$7F` (fuente);
    índice 0 (transparente); atributo con paleta cuyo color es el fondo; celda sin
    escribir.
@@ -268,6 +348,12 @@ contador de arranques.
 6. **¿Queda un elemento tras cambiar de pantalla?** casi siempre un **sprite que
    no apagaste** (`vc_sprite_disable`) o VRAM sin limpiar.
 7. **¿Aleatorio repetido?** semilla fija (§5.2).
+8. **¿El fondo tiene un color que no pediste?** doble escritura de la entrada 15
+   (§2.5).
+9. **¿Dibujo roto solo cerca de ciertos momentos (fin de línea, game over)?**
+   VBLANK anidado (§3.6): saca la rutina que abre su propio VBLANK fuera de la
+   sección crítica.
+10. **¿Colores "todos mal" en arte importado?** orden `AABBGGRR` (§2.8).
 
 ---
 
@@ -282,6 +368,11 @@ contador de arranques.
 - [ ] Lo que gira/espeja → sprite con `VC_SPR_FLIP_*` (o 4 patrones si es tile).
 - [ ] Texto: función que **recorta**, centrado por `(40-len)/2`, filas 1..28.
 - [ ] RNG sembrado con `$D41B` + `rom_get_micros()` (nunca semilla fija).
+- [ ] Una sola pareja `wait_vblank`/`wait_vblank_end` por frame; las rutinas que
+  abren su propio VBLANK se llaman **fuera** de la sección crítica (§3.6).
+- [ ] Fondo con **una única** fuente de verdad (no mezclar `vc_set_bgcolor` y
+  `vc_pal_set_bg(3,3,...)`, §2.5).
+- [ ] Arte importado verificado contra su formato real de color (§2.8).
 - [ ] Salida limpia: `vc_clear_oam()` + scroll 0 + silenciar sonido.
 - [ ] Recursos dentro de límites: ≤32 sprites (≤8/línea), ≤256 patrones de fondo, ≤64 de sprite.
 - [ ] Persistencia: la RAM es de sesión; usar SD si se necesita.
@@ -312,4 +403,4 @@ contador de arranques.
 | Patrones de fondo | 256 |
 | Patrones de sprite | 64 |
 | Sprites (OAM) | 32 (máx. **8 por línea**) |
-| RAM de programa | `$0800-$3DFF` (~13.5 KB) |
+| RAM de programa | `$0800-$3DFF` (~13.5 KB) por defecto; ampliable moviendo el stack (ver §4.5, p. ej. `$0800-$3F9F`) |
