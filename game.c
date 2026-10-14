@@ -28,9 +28,10 @@
 /* ===========================================================================
  * GEOMETRIA DEL TABLERO
  * ===========================================================================
- * Pozo de 10x20 celdas. Se reserva el HUD en la parte superior (filas 0-3) y el
- * panel lateral derecho (columnas 27-39) para NEXT/puntos/nivel/lineas.
- * El pozo queda centrado a la izquierda: columnas 15..24, filas 5..24.
+ * Pozo de 10x20 celdas. Se reserva el HUD en la parte superior (fila 1 el
+ * titulo, fila 2 las instrucciones) y el panel lateral derecho (columnas 27-39)
+ * para NEXT/puntos/nivel/lineas.
+ * El pozo queda centrado a la izquierda: columnas 15..24, filas 6..26.
  * =========================================================================== */
 #define BOARD_W      10                  /* celdas de ancho (clasico)         */
 #define BOARD_H      20                  /* celdas de alto  (clasico)         */

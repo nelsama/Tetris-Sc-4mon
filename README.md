@@ -37,10 +37,26 @@ Se puede jugar con **joystick Atari (DB9)** o con **teclado UART**, en paralelo.
 | `w` / `8` / flecha ↑ / espacio | rotar |
 | `p` | pausa (alterna) |
 | `q` | salir al monitor |
-| `r` | (en GAME OVER) jugar de nuevo |
+| `r` | (en GAME OVER) volver al menú |
 
 Al mover a los lados o rotar hay **auto-repetición (DAS)**: mantener la dirección
 un instante hace que la pieza siga moviéndose.
+
+### Menú de dificultad
+
+Al arrancar (y tras cada GAME OVER) se muestra la pantalla de título con un
+**menú de dificultad** de 3 opciones:
+
+| Opción | Velocidad inicial (nivel 1) | Aceleración | Tope |
+|--------|------------------------------|-------------|------|
+| **FÁCIL** | 70 frames/caída | +2 por nivel | 20 |
+| **NORMAL** | 45 frames/caída | +3 por nivel | 10 |
+| **DIFÍCIL** | 24 frames/caída | +4 por nivel | 4 |
+
+- **Izquierda/Derecha** (joystick o `A`/`D`): cambia la opción (parpadea con
+  flechas `>` `<`).
+- **Botón / Espacio / Enter**: empieza la partida con la dificultad elegida.
+- **Q**: salir.
 
 ### Reglas
 
@@ -52,15 +68,18 @@ un instante hace que la pieza siga moviéndose.
   por el nivel. Además, cada celda de soft drop suma 1 punto.
 - **Efecto al borrar línea:** las filas completas **parpadean** (3 destellos
   blancos) antes de colapsar, como en los arcade.
-- **Niveles:** cada 10 líneas sube el nivel y la gravedad acelera (mínimo ~6
-  frames por caída).
+- **Niveles:** cada 10 líneas sube el nivel y la gravedad acelera (base,
+  aceleración y tope dependen de la dificultad, ver tabla).
+- **Lock delay:** al apoyarse, la pieza espera ~0.5 s antes de fijarse. Si la
+  **mueves o rotas** mientras está apoyada, el contador se reinicia (hasta 15
+  veces), para poder **deslizarla a un hueco** antes de que se fije.
 - **Pieza siguiente:** se muestra en el panel `NEXT` (arriba a la derecha).
 - **Derrota:** si una pieza nueva no cabe al aparecer (pozo desbordado).
 - **Highscore:** se guardan las **5 mejores puntuaciones** de la sesión (en RAM),
   con las líneas hechas. Al morir se muestra la tabla con tu partida **resaltada**.
   Al salir al monitor (`jmp $8000` reinicia la RAM) la tabla se pierde.
-- **Fin de partida:** se muestra `GAME OVER` y espera el **botón** (o `R`) para
-  reintentar, o `Q` para salir.
+- **Fin de partida:** se muestra `GAME OVER`; el **botón** (o `R`) **vuelve al
+  menú** de dificultad, o `Q` para salir.
 
 ---
 
@@ -101,22 +120,29 @@ mismo patrón sirve para las 7 piezas: cada tipo usa su propia paleta/flags.
 
 ### Color y paletas
 
-- `BG_COLOR` se programa a **negro** (entrada 15 de la paleta de fondo). El cielo
-  del fondo se dibuja con tiles propios, no con BG_COLOR.
-- **7 colores de pieza**: como solo hay 4 paletas de fondo (una reservada al
-  fondo), se combinan **3 paletas × 3 patrones de bloque** (que colocan el
-  relleno en un índice de color distinto) para obtener 7 colores únicos:
-  cian, amarillo, rojo, verde, naranja, azul y magenta.
-- **Paleta 3** → fondo (cielo + Kremlin): índices 1=azul medianoche, 2=dorado.
-  Su índice 3 es `BG_COLOR` (entrada 15), que se deja en negro.
+El core tiene **4 paletas de fondo**. Su índice 3 de la paleta 3 **es** la entrada
+de `BG_COLOR` (entrada 15), así que hay que repartir con cuidado:
+
+| Paleta | Uso | Colores (idx1 / idx2 / idx3) |
+|--------|-----|------------------------------|
+| **pal0** | TORRES | marrón claro / naranja / amarillo |
+| **pal1** | UI + piezas I, J | cian / azul / gris (UI) |
+| **pal2** | piezas O, T, Z | amarillo / naranja / blanco |
+| **pal3** | piezas S, L + **FONDO** | verde / rojo / **BG_COLOR = AZUL** |
+
+- **7 colores de pieza**: se combinan paletas con **3 patrones de bloque** (A/B/C,
+  que ponen el relleno en un índice distinto) para obtener 7 colores únicos:
+  cian, amarillo, naranja, verde, blanco, azul y rojo.
+- **BG_COLOR = azul**: es el fondo (cielo y pozo son tiles **transparentes** que
+  lo toman).
 - El **HUD y los textos** usan la fuente del sistema (tile = ASCII), que pinta
   siempre el color 3 de la paleta de la celda.
 
 ### Fondo: cielo + skyline de torres a los costados
 
-El fondo es un **cielo nocturno** (BG_COLOR azul medianoche + estrellas) con un
-**skyline de torres** a cada lado del pozo. Las torres vienen de un Piskel de
-10 frames de 8×8, convertidos a patrones de 2 planos.
+El fondo es un **cielo azul** (BG_COLOR) con un **skyline de torres** a cada lado
+del pozo. Las torres vienen de un Piskel de 10 frames de 8×8, convertidos a
+patrones de 2 planos.
 
 Cada torre son **2 tiles de ancho**, con este reparto vertical:
 
@@ -130,13 +156,18 @@ Cada torre son **2 tiles de ancho**, con este reparto vertical:
 
 - El **remate** son los pisos 1-5 (columna izquierda) y 6-10 (derecha).
 - La **altura de cada torre** (5 a **10 tiles** como máximo) se define en
-`towerL[]` / `towerR[]`; bajo el remate se repite la base (tiles 5 | 10) hasta el
-suelo (fila 29). `draw_tower()` limita el alto a 10 tiles por seguridad.
-- Se dibujan **7 torres por lado** (14 columnas), una al lado de otra, con
-alturas distintas para que el skyline quede escalonado.
-- **3 colores + fondo** (paleta 3): idx1 = naranja, idx2 = amarillo,
-  idx3 = naranja oscuro; idx0 = transparente. El **cielo** usa la paleta 0 (fondo
-  azul oscuro + estrellas), así no compite por la paleta de las torres.
+  `towerL[]` / `towerR[]` y sus columnas en `towerL_col[]` / `towerR_col[]`; bajo
+  el remate se repite la base (tiles 5 | 10) hasta el suelo (fila 29).
+  `draw_tower()` limita el alto a 10 tiles por seguridad.
+- Se dibujan **4 torres por lado**, **separadas por columnas de cielo** para que
+  se vean como pilares independientes escalonados.
+- Las zonas **azules** del tile (color `0xffa60100` del Piskel, formato
+  `AABBGGRR`) se vuelven **transparentes** -> toman el BG_COLOR azul.
+- El **zócalo** bajo el pozo (filas 27-29) puede llevar una franja de torres.
+- **Colores del skyline** (paleta 0): idx1 = marrón claro, idx2 = naranja,
+  idx3 = amarillo; idx0 = transparente (cielo). El **cielo** es un tile
+  transparente que toma el `BG_COLOR` azul, así no compite por la paleta de
+  las torres.
 
 ### Sonido (SID 6581, compatible C64)
 
@@ -180,10 +211,13 @@ up = 6 (`0x40`), fire = 7 (`0x80`). El joystick Atari es **activo por nivel bajo
 | Recurso | Límite | Uso previsto |
 |---|---|---|
 | Sprites (OAM) | 32 | **0** |
-| Patrones de fondo | 256 (fuente en `$20`-`$7F`) | 3 bloques ($01-$07) + muro + 8 del fondo + fuente |
+| Patrones de fondo | 256 (fuente en `$20`-`$7F`) | 3 bloques ($01-$07) + muro + tiles del fondo + 10 de torres + fuente |
 | Patrones de sprite | 64 | 0 |
 | Tablero | 10×20 = 200 celdas | array en RAM (200 B) |
-| RAM | `$0800-$3DFF` (~13.5 KB) | holgado (~13 KB de binario) |
+| RAM | `$0800-$3F9F` (~14 KB) | ~13.6 KB de binario |
+
+> La RAM se amplió de `$3DFF` a `$3F9F` (stack en `$3FA0-$3FFD`, `startup.s`
+> actualizado) porque el juego + cadenas no cabían en el rango original.
 
 ---
 
@@ -228,9 +262,11 @@ python tools/test_core.py
 ```
 Tetris/
 ├── makefile            build autónomo (ROOT = .)
-├── game.c              lógica del juego
+├── game.c              lógica del juego (piezas, tablero, menú, layout)
 ├── sound.c             driver SID
 ├── joy.c               driver del joystick Atari (GPIO)
+├── Torres.c            frames de las torres (generado por Piskel)
+├── Torres-*.piskel     fuente editable (Piskel) del skyline de torres
 ├── startup.s           arranque cc65 -> jmp $8000 (monitor)
 ├── include/
 │   ├── video.h         API del Core de Vídeo (copia de la lib)
@@ -239,6 +275,8 @@ Tetris/
 │   └── romapi.h        ROM API del monitor
 ├── config/
 │   └── programa.cfg    config del linker (copia de la lib)
+├── lib/
+│   └── vc.lib          copia de la biblioteca del Core de Vídeo
 ├── doc/
 │   ├── VIDEO-LIB.md    manual de la biblioteca
 │   ├── TIPS-Y-TRAMPA.md  lecciones y trampas (para empezar un juego nuevo)
@@ -247,7 +285,10 @@ Tetris/
 │   ├── test_core.py    validación del núcleo lógico (Python)
 │   ├── gen_bg.py       generador del cielo (fondo)
 │   ├── gen_torres.py   conversor de los frames Piskel de torres
-│   └── layout.py       simulador del layout de pantalla (ASCII)
+│   ├── layout.py       simulador del layout de pantalla (ASCII)
+│   ├── render_bg.py    render del fondo a PPM (referencia visual)
+│   ├── render_tiles.py render de tiles/bloques a PPM
+│   └── analiza_torres.py  análisis de los frames del Piskel
 ├── build/              objetos
 └── output/
     ├── game.bin        binario final

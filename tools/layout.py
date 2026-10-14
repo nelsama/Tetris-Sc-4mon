@@ -1,6 +1,6 @@
 """Simula el layout (40x30 celdas) con el skyline de torres (max 10 tiles alto)."""
 W, H = 40, 30
-BOARD_X0, BOARD_Y0 = 15, 5
+BOARD_X0, BOARD_Y0 = 15, 6
 FLOOR = 29
 
 towerL = [10, 6, 9, 7]
@@ -44,11 +44,11 @@ def put(col,row,s):
 
 draw_well()
 put(15,1,"T E T R I S")
-put(29,3,"NEXT")
-put(29,10,"PTS"); put(33,10,"00000")
-put(29,12,"LINEAS"); put(36,12,"000")
-put(29,14,"NIVEL"); put(36,14,"01")
-put(29,16,"MEJOR"); put(34,16,"00000")
+put(29,5,"NEXT")
+put(29,12,"PTS"); put(33,12,"00000")
+put(29,14,"LINEAS"); put(36,14,"000")
+put(29,16,"NIVEL"); put(36,16,"01")
+put(29,18,"MEJOR"); put(34,18,"00000")
 put(0,2,"WASD:mover BOTON/W:rotar P:pausa Q:salir")
 
 print("   " + "".join(str(i%10) for i in range(W)))
