@@ -1,0 +1,8 @@
+# Artefactos de compilacion (generados por el makefile)
+build/
+output/
+
+# Artefactos de herramientas Python
+__pycache__/
+*.pyc
+tools/*.ppm

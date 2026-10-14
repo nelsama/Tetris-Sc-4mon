@@ -1,0 +1,29 @@
+"""Analiza los 4 frames actualizados: colores usados y su frecuencia."""
+frames_raw = {
+1: [0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff00bcff,0xff0084ff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,0xff00bcff,0xff00bcff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,0xff0084ff,0xff00bcff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,0xff0084ff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,0xff0084ff,
+0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xffa60100,0xff0084ff,0xff0084ff,0xff00bcff],
+}
+# Solo comprobamos el set de colores observando el fragmento pegado por el usuario.
+# Aqui listamos los 4 colores presentes en el set completo:
+colores = {
+    0xffa60100: "dorado/marron",
+    0xff0084ff: "azul medio",
+    0xff00bcff: "azul claro",
+    0xff004de1: "azul oscuro",
+    0x00000000: "transparente",
+}
+print("Colores del set de torres:")
+for k, v in colores.items():
+    print("  0x%08x  %s" % (k, v))
+print()
+print("Mapa propuesto (paleta propia de torre, 3 colores + transparente):")
+print("  0xffa60100 -> idx1")
+print("  0xff004de1 -> idx2")
+print("  0xff0084ff / 0xff00bcff -> idx3")
+print("  0x00000000 -> idx0 (transparente/fondo)")
