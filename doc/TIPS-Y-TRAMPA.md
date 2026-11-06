@@ -296,6 +296,46 @@ STACK: start = $3FA0, size = $005E;    /* $3FA0-$3FFD */
 > RAM a `$3F9F` y el stack a `$3FA0-$3FFD` (igual que hace el proyecto
 > `SpaceInvaders`).
 
+### 4.6 Detecta las colisiones DESPUÉS de mover, no antes
+Orden correcto del bucle de juego:
+
+```c
+leer_entrada();
+aplicar_movimiento();        /* usuario o gravedad  */
+comprobar_colision();        /* AHORA, con la posición nueva */
+reaccionar();                /* sonido, daño, bloqueo...      */
+dibujar();
+```
+
+Si compruebas antes de mover, reaccionas al estado **del frame anterior**: el
+objeto ya se ve chocando pero el efecto (sonido, bloqueo) llega **un frame
+tarde**. A 60 fps son ~17 ms, y el oído humano lo nota perfectamente en golpes
+secos.
+
+**Síntoma típico:** "el sonido del impacto suena con retraso". El código parece
+correcto porque la variable `grounded` está bien calculada — solo que está
+calculada **en el momento equivocado**.
+
+> **Ejemplo real:** en Tetris el golpe al aterrizar se disparaba con
+> `grounded`, calculado **antes** de aplicar la gravedad. La pieza bajaba y
+> tocaba, pero el sonido no salía hasta el siguiente frame. Se movió el cálculo
+> a después de la gravedad y se usó el **flanco** (`lock_delay == 0`) para que
+> sonara una sola vez.
+
+**Corolario — flancos, no niveles.** Reacciona al **cambio** de estado, no al
+estado:
+
+```c
+if (toca_suelo && !tocaba_antes) sonar_impacto();   /* una vez, al tocar */
+tocaba_antes = toca_suelo;
+```
+
+Si reaccionas al nivel, el efecto se repite en cada frame mientras dure el
+contacto.
+
+> **Ejemplo real:** con `lock_delay` como contador de frames apoyada, el flanco
+> es simplemente `lock_delay == 0`, sin variable extra.
+
 ---
 
 ## 5. Sonido (SID)
@@ -331,6 +371,42 @@ contador de arranques.
 > **Ejemplo:** los objetos aparecían siempre en las mismas posiciones porque la
 > semilla era fija; se resolvió sembrando con `$D41B` + `rom_get_micros()`.
 
+### 5.3 Una voz por rol: los efectos cortos NO comparten voz con la música
+El SID tiene **3 voces**. Si un "clic" y una melodía usan la **misma** voz, cada
+vez que suena el clic **pisa** la nota en curso: se oye un chirrido y la melodía
+se corta.
+
+Reparte por **rol**, no por disponibilidad:
+
+| Voz | Rol |
+|-----|-----|
+| 1 | melodía |
+| 2 | bajo / acordes |
+| 3 | efectos cortos (clics) y —sin gate— aleatoriedad |
+
+**Trampa del `return`:** un guardián del estilo `if (melodia_sonando) return;`
+hace que el efecto **desaparezca en silencio** justo cuando más se necesita (p.
+ej. el golpe de encajar mientras suena el jingle). Mejor: usa otra voz, o salta
+solo esa capa, no el efecto entero.
+
+> **Ejemplo real:** el click de mover y el golpe de aterrizar compartían la voz 1;
+> al moverse sonaba un chirrido y el golpe se descartaba con un `return`. Se movió
+> el click a la voz 3 y el golpe pasó a ocupar la voz 1 **solo si estaba libre**.
+
+### 5.4 Temporiza el sonido por frames, no por tiempo real
+`rom_get_micros()` devuelve `uint32_t` y **arrastra la aritmética de 32 bits** de
+cc65 (multiplicación/división). En un proyecto ajustado eso puede costar
+**cientos de bytes** de código y desbordar la RAM.
+
+- Si el juego tiene bucle a frame fijo, **cuenta frames** en `snd_update()`.
+- Traduce ms → frames: `frames = ms * 60 / 1000` (a 60 Hz).
+- Reserva el tiempo real (`rom_get_micros`) para lo que no dependa del frame
+  (sembrar el RNG, medir pulsaciones largas).
+
+> **Ejemplo real:** portar un sonido midiendo en ms con `rom_get_micros()`
+> desbordaba la RAM en 343 bytes; contando frames quedó en 0 y el tempo era el
+> correcto.
+
 ---
 
 ## 6. Depuración: orden de sospechas
@@ -354,6 +430,14 @@ contador de arranques.
    VBLANK anidado (§3.6): saca la rutina que abre su propio VBLANK fuera de la
    sección crítica.
 10. **¿Colores "todos mal" en arte importado?** orden `AABBGGRR` (§2.8).
+11. **¿Un efecto reacciona un frame tarde?** colisión comprobada antes de mover
+    (§4.6); el cálculo debe ir **después** del movimiento.
+12. **¿El efecto se repite sin parar mientras dura el contacto?** estás mirando
+    el nivel en vez del flanco (§4.6).
+13. **¿Sonidos chirriantes o que cortan la música?** dos efectos comparten voz
+    (§5.3).
+14. **¿Se pierde un sonido justo cuando otro está sonando?** un guardián tipo
+    `if (sonando) return;` lo está descartando (§5.3).
 
 ---
 
@@ -368,6 +452,12 @@ contador de arranques.
 - [ ] Lo que gira/espeja → sprite con `VC_SPR_FLIP_*` (o 4 patrones si es tile).
 - [ ] Texto: función que **recorta**, centrado por `(40-len)/2`, filas 1..28.
 - [ ] RNG sembrado con `$D41B` + `rom_get_micros()` (nunca semilla fija).
+- [ ] Orden del bucle: mover → **comprobar colisión** → reaccionar → dibujar
+  (§4.6); reacciona a **flancos**, no a niveles.
+- [ ] Una **voz del SID por rol** (melodía / bajo / efectos); los efectos cortos
+  no comparten voz con la música (§5.3).
+- [ ] Sonido temporizado por **frames** del bucle, no por `rom_get_micros()`
+  (§5.4).
 - [ ] Una sola pareja `wait_vblank`/`wait_vblank_end` por frame; las rutinas que
   abren su propio VBLANK se llaman **fuera** de la sección crítica (§3.6).
 - [ ] Fondo con **una única** fuente de verdad (no mezclar `vc_set_bgcolor` y
