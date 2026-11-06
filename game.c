@@ -266,14 +266,29 @@ static uint8_t  dead;           /* ya perdio (pausa en curso)                 */
 static uint8_t  difficulty;     /* 0=Facil, 1=Normal, 2=Dificil               */
 
 #define DIFF_COUNT  3
-/* Parametros de velocidad por dificultad:
+/* Parametros por dificultad. Las tres columnas se separan de forma CLARA:
  *   base   = frames por caida en el nivel 1 (mas = mas lento)
  *   step   = cuanto se reduce por nivel
  *   minv   = frames minimos (velocidad tope)
- * F=Facil, N=Normal, D=Dificil. */
-static const uint8_t diff_base[DIFF_COUNT] = { 70, 45, 24 };
-static const uint8_t diff_step[DIFF_COUNT] = {  2,  3,  4 };
-static const uint8_t diff_min [DIFF_COUNT] = { 20, 10,  4 };
+ *   lock   = frames que la pieza apoyada espera antes de fijarse
+ *   resets = veces que se puede reiniciar ese contador al mover/rotar
+ *
+ *            FACIL  NORMAL  DIFICIL
+ *  nivel 1:   75     40      20  frames/caida   (1.25s / 0.67s / 0.33s)
+ *  tope:      25      8       3  frames/caida   (0.42s / 0.13s / 0.05s)
+ *  nivel que
+ *  llega al
+ *  tope:      26      11       5
+ *  margen de
+ *  ajuste:   0.5s   0.25s   0.12s  + resets
+ */
+static const uint8_t diff_base[DIFF_COUNT] = { 75, 40, 20 };
+static const uint8_t diff_step[DIFF_COUNT] = {  2,  4,  5 };
+static const uint8_t diff_min [DIFF_COUNT] = { 25,  8,  3 };
+/* Margen de ajuste por dificultad: frames de lock. Los reintentos permitidos
+ * se derivan de este valor (lock / 3 = 10, 5 y 2), asi no hace falta otra
+ * tabla y se ahorra RAM en un binario que ya va justo. */
+static const uint8_t diff_lock[DIFF_COUNT] = { 30, 15, 7 };
 /* Nombres para el menu (devueltos por funcion, sin array de punteros). */
 static const char *diff_label(uint8_t i) {
     if (i == 0) return "FACIL";
@@ -286,11 +301,10 @@ static uint8_t  drop_tick;      /* contador hasta la siguiente caida           *
 static uint8_t  lock_delay;     /* frames con la pieza apoyada (para ajustar)  */
 static uint8_t  lock_resets;    /* reinicios del lock permitidos (al mover/rotar) */
 
-/* Lock delay: al apoyarse, la pieza espera LOCK_DELAY frames antes de fijarse.
- * Si el jugador MUEVE o ROTA mientras esta apoyada, el contador se reinicia
- * (hasta LOCK_MAX_RESETS veces), para poder deslizarla a un hueco. */
-#define LOCK_DELAY       30
-#define LOCK_MAX_RESETS  15
+/* Lock delay: al apoyarse, la pieza espera unos frames antes de fijarse. Si el
+ * jugador MUEVE o ROTA mientras esta apoyada, el contador se reinicia (hasta N
+ * veces), para poder deslizarla a un hueco. Ambos valores dependen de la
+ * dificultad: en DIFICIL apenas hay margen de ajuste. */
 
 /* Mejores puntuaciones de la sesion (top 5), en orden descendente. */
 #define HS_COUNT  5
@@ -1105,7 +1119,8 @@ static void lock_and_next(void) {
 
 /* Reinicia el lock delay si aun quedan reseteos (al mover/rotar apoyada). */
 static void reset_lock(void) {
-    if (lock_resets < LOCK_MAX_RESETS) {
+    /* Un tercio de los frames de lock "extra" como reintentos (10, 5, 2). */
+    if (lock_resets < diff_lock[difficulty] / 3) {
         lock_delay = 0;
         lock_resets++;
     }
@@ -1212,7 +1227,7 @@ static uint8_t play_game(void) {
 
         /* El lock (con su animacion de lineas) se hace FUERA del VBLANK, porque
          * la animacion usa su propio vc_wait_vblank() (no se puede anidar). */
-        if (grounded && lock_delay >= LOCK_DELAY) {
+        if (grounded && lock_delay >= diff_lock[difficulty]) {
             lock_and_next();
             /* Los sonidos lanzados por el lock (encaje/linea/game over) deben
              * empezar YA, no en el frame siguiente. */
@@ -1273,14 +1288,17 @@ static uint8_t menu_input(void) {
         }
     }
 
-    /* Aplica el cambio de dificultad y redibuja el menu. */
-    if (res == MR_LEFT) {
-        if (difficulty > 0) difficulty--;
+    /* Aplica el cambio de dificultad y redibuja el menu. Suena un click (reusa
+     * snd_move) solo si la seleccion cambia de verdad. */
+    if (res == MR_LEFT && difficulty > 0) {
+        difficulty--;
         draw_diff_menu(difficulty, 1);
+        snd_move();
         res = MR_NONE;
-    } else if (res == MR_RIGHT) {
-        if (difficulty < DIFF_COUNT - 1) difficulty++;
+    } else if (res == MR_RIGHT && difficulty < DIFF_COUNT - 1) {
+        difficulty++;
         draw_diff_menu(difficulty, 1);
+        snd_move();
         res = MR_NONE;
     }
     return res;
@@ -1289,8 +1307,9 @@ static uint8_t menu_input(void) {
 /* Dibuja las 3 opciones de dificultad en una fila; 'sel' va resaltada. */
 static void draw_diff_menu(uint8_t sel, uint8_t on) {
     uint8_t i;
-    /* Columna inicial de cada opcion (centradas con separacion). */
-    const uint8_t col[DIFF_COUNT] = { 8, 16, 25 };
+    /* Columna inicial de cada opcion. Repartidas por toda la fila (40 cols)
+     * para que queden bien separadas: 6 (+5) 17 (+6) 28 (+7). */
+    const uint8_t col[DIFF_COUNT] = { 6, 17, 28 };
     /* Longitud de cada nombre. */
     const uint8_t len[DIFF_COUNT] = { 5, 6, 7 };
 

@@ -177,9 +177,11 @@ static void click3(uint16_t freq, uint8_t pw, uint8_t frames) {
     e_t = frames;
 }
 
-/* Click fino al mover/rotar (VOZ 3: no pisa la melodia ni el bajo). */
+/* Click corto (VOZ 3: no pisa la melodia ni el bajo). Se usa al mover/rotar
+ * y al cambiar de dificultad en el menu: agudo pero con un poco de cuerpo
+ * (pulso ~50%), asi se oye claro sin resultar estridente. */
 void snd_move(void) {
-    click3(0x1200, 0x04, 2);
+    click3(0x0C00, 0x08, 3);
 }
 
 /* Contacto con el suelo: grave y con cuerpo, para que se perciba el golpe. */

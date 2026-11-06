@@ -47,11 +47,19 @@ un instante hace que la pieza siga moviéndose.
 Al arrancar (y tras cada GAME OVER) se muestra la pantalla de título con un
 **menú de dificultad** de 3 opciones:
 
-| Opción | Velocidad inicial (nivel 1) | Aceleración | Tope |
-|--------|------------------------------|-------------|------|
-| **FÁCIL** | 70 frames/caída | +2 por nivel | 20 |
-| **NORMAL** | 45 frames/caída | +3 por nivel | 10 |
-| **DIFÍCIL** | 24 frames/caída | +4 por nivel | 4 |
+| Opción | Velocidad inicial (nivel 1) | Por nivel | Tope | Lock delay | Reintentos |
+|--------|------------------------------|-----------|------|------------|------------|
+| **FÁCIL** | 75 f (~1.25 s) | −2 | 25 f (~0.42 s) | 30 f (~0.5 s) | 10 |
+| **NORMAL** | 40 f (~0.67 s) | −4 | 8 f (~0.13 s) | 15 f (~0.25 s) | 5 |
+| **DIFÍCIL** | 20 f (~0.33 s) | −5 | 3 f (~0.05 s) | 7 f (~0.12 s) | 2 |
+
+Las tres se separan a propósito en **dos frentes**:
+
+- **Velocidad**: en DIFÍCIL la pieza ya cae al doble de ritmo que en NORMAL, y
+  llega a su tope en el nivel 5 (en FÁCIL no lo alcanza hasta el 26).
+- **Margen de ajuste**: el *lock delay* y los reintentos al mover/rotar son
+  mucho más cortos en DIFÍCIL, así que **no da tiempo a recolocar** la pieza
+  apoyada y hay que planificar antes.
 
 - **Izquierda/Derecha** (joystick o `A`/`D`): cambia la opción (parpadea con
   flechas `>` `<`).
@@ -70,9 +78,10 @@ Al arrancar (y tras cada GAME OVER) se muestra la pantalla de título con un
   blancos) antes de colapsar, como en los arcade.
 - **Niveles:** cada 10 líneas sube el nivel y la gravedad acelera (base,
   aceleración y tope dependen de la dificultad, ver tabla).
-- **Lock delay:** al apoyarse, la pieza espera ~0.5 s antes de fijarse. Si la
-  **mueves o rotas** mientras está apoyada, el contador se reinicia (hasta 15
-  veces), para poder **deslizarla a un hueco** antes de que se fije.
+- **Lock delay:** al apoyarse, la pieza espera un momento antes de fijarse. Si la
+  **mueves o rotas** mientras está apoyada, el contador se reinicia (hasta N
+  veces), para poder **deslizarla a un hueco**. Cuánto dura y cuántos reintentos
+  hay depende de la dificultad (ver tabla).
 - **Pieza siguiente:** se muestra en el panel `NEXT` (arriba a la derecha).
 - **Derrota:** si una pieza nueva no cabe al aparecer (pozo desbordado).
 - **Highscore:** se guardan las **5 mejores puntuaciones** de la sesión (en RAM),
@@ -184,9 +193,10 @@ El juego usa el **SID** mapeado en `$D400-$D41F`. Driver en `sound.c` /
 
 | Evento | Cuándo | Sonido |
 |--------|--------|--------|
-| **Mover / rotar** | al aceptarse el movimiento | click fino y seco (2 frames) |
-| **Tocar el suelo** | flanco al apoyarse (aún sin fijar) | click grave apagado (3 frames) |
-| **Fijar (encajar)** | a los ~30 frames de lock | golpe grave + bajo |
+| **Mover / rotar** | al aceptarse el movimiento | click seco (3 frames) |
+| **Cambiar dificultad** | en el menú, al moverse entre opciones | mismo click |
+| **Tocar el suelo** | flanco al apoyarse (aún sin fijar) | click grave (4 frames) |
+| **Fijar (encajar)** | a los ~0.1-0.5 s de lock | golpe grave + bajo |
 | **Línea** | tras el parpadeo, al colapsar | arpegio ascendente + bajo |
 | **Subir de nivel** | cada 10 líneas | mismo arpegio |
 | **Game over** | la pieza nueva no cabe | melodía descendente + bajo |
@@ -231,10 +241,11 @@ up = 6 (`0x40`), fire = 7 (`0x80`). El joystick Atari es **activo por nivel bajo
 | Patrones de fondo | 256 (fuente en `$20`-`$7F`) | 3 bloques ($01-$07) + muro + tiles del fondo + 10 de torres + fuente |
 | Patrones de sprite | 64 | 0 |
 | Tablero | 10×20 = 200 celdas | array en RAM (200 B) |
-| RAM | `$0800-$3F9F` (~14 KB) | ~13.6 KB de binario |
+| RAM | `$0800-$3FBF` (~14 KB) | ~14 KB de binario |
 
-> La RAM se amplió de `$3DFF` a `$3F9F` (stack en `$3FA0-$3FFD`, `startup.s`
-> actualizado) porque el juego + cadenas no cabían en el rango original.
+> La RAM se amplió de `$3DFF` a `$3FBF` y el stack se redujo a 64 bytes
+> (`$3FC0-$3FFD`, `startup.s` actualizado) porque el juego + cadenas no cabían
+> en el rango original.
 
 ---
 

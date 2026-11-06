@@ -281,8 +281,8 @@ RAM moviendo solo el stack**:
 ```ld
 /* programa.cfg: subir el stack libera RAM para el programa */
 __STACKSTART__: value = $3FFD;         /* antes $3EFF, etc. */
-RAM:   start = $0800, size = $379F;    /* $0800-$3F9F */
-STACK: start = $3FA0, size = $005E;    /* $3FA0-$3FFD */
+RAM:   start = $0800, size = $37BF;    /* $0800-$3FBF */
+STACK: start = $3FC0, size = $003E;    /* $3FC0-$3FFD */
 ```
 
 - Recuerda **actualizar `startup.s`** si el stack cambia de sitio.
@@ -293,8 +293,9 @@ STACK: start = $3FA0, size = $005E;    /* $3FA0-$3FFD */
 
 > **Ejemplo real:** tras añadir el menú de dificultad y varias cadenas, el juego
 > desbordaba `$3DFF` por 65-138 bytes. En vez de recortar el texto, se subió la
-> RAM a `$3F9F` y el stack a `$3FA0-$3FFD` (igual que hace el proyecto
-> `SpaceInvaders`).
+> RAM a `$3FBF` y el stack a `$3FC0-$3FFD` (igual que hace el proyecto
+> `SpaceInvaders`). Cuando volvió a faltar espacio, el stack se bajó a 64 bytes
+> porque el juego no es recursivo y llama pocas funciones en profundidad.
 
 ### 4.6 Detecta las colisiones DESPUÉS de mover, no antes
 Orden correcto del bucle de juego:
@@ -412,7 +413,7 @@ cc65 (multiplicación/división). En un proyecto ajustado eso puede costar
 ## 6. Depuración: orden de sospechas
 
 1. **¿Compila/enlaza?** Revisa `output/game.map`: tamaños de segmentos y que no
-   desborde la RAM (`$0800-$3F9F`; ver §4.5 si te quedas corto).
+   desborde la RAM (`$0800-$3FBF`; ver §4.5 si te quedas corto).
 2. **¿No se ve un tile?** índice fuera de rango; dibujo en `$20-$7F` (fuente);
    índice 0 (transparente); atributo con paleta cuyo color es el fondo; celda sin
    escribir.
@@ -493,4 +494,4 @@ cc65 (multiplicación/división). En un proyecto ajustado eso puede costar
 | Patrones de fondo | 256 |
 | Patrones de sprite | 64 |
 | Sprites (OAM) | 32 (máx. **8 por línea**) |
-| RAM de programa | `$0800-$3DFF` (~13.5 KB) por defecto; ampliable moviendo el stack (ver §4.5, p. ej. `$0800-$3F9F`) |
+| RAM de programa | `$0800-$3DFF` (~13.5 KB) por defecto; ampliable moviendo el stack (ver §4.5, p. ej. `$0800-$3FBF`) |
