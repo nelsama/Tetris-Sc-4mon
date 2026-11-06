@@ -15,6 +15,8 @@ biblioteca `vc`.
 
 ---
 
+![Tetris en el Core de Vídeo](doc/img/tetris-gameplay.png)
+
 ## Cómo jugar
 
 Se puede jugar con **joystick Atari (DB9)** o con **teclado UART**, en paralelo.
@@ -46,6 +48,8 @@ un instante hace que la pieza siga moviéndose.
 
 Al arrancar (y tras cada GAME OVER) se muestra la pantalla de título con un
 **menú de dificultad** de 3 opciones:
+
+![Menú de dificultad](doc/img/tetris-menu.png)
 
 | Opción | Velocidad inicial (nivel 1) | Por nivel | Tope | Lock delay | Reintentos |
 |--------|------------------------------|-----------|------|------------|------------|
@@ -87,8 +91,11 @@ Las tres se separan a propósito en **dos frentes**:
 - **Highscore:** se guardan las **5 mejores puntuaciones** de la sesión (en RAM),
   con las líneas hechas. Al morir se muestra la tabla con tu partida **resaltada**.
   Al salir al monitor (`jmp $8000` reinicia la RAM) la tabla se pierde.
-- **Fin de partida:** se muestra `GAME OVER`; el **botón** (o `R`) **vuelve al
-  menú** de dificultad, o `Q` para salir.
+- **Fin de partida:** se muestra `GAME OVER` con la tabla de mejores
+  puntuaciones; el **botón** (o `R`) **vuelve al menú** de dificultad, o `Q` para
+  salir.
+
+![Game over y tabla de highscores](doc/img/tetris-gameover.png)
 
 ---
 
@@ -308,7 +315,8 @@ Tetris/
 ├── doc/
 │   ├── VIDEO-LIB.md    manual de la biblioteca
 │   ├── TIPS-Y-TRAMPA.md  lecciones y trampas (para empezar un juego nuevo)
-│   └── CORE-BUG-sprite-right-edge.md
+│   ├── CORE-BUG-sprite-right-edge.md
+│   └── img/            capturas reales del juego (emulador)
 ├── tools/
 │   ├── test_core.py    validación del núcleo lógico (Python)
 │   ├── gen_bg.py       generador del cielo (fondo)
