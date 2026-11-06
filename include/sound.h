@@ -10,11 +10,13 @@
  *   +5 ATTACK/DECAY (+6 SUSTAIN/RELEASE)
  * $D418 = MODE/VOL (bits 3:0 = volumen master)
  *
- * Voces asignadas:
- *   Voz 1: tic al mover/rotar la pieza (snd_move / snd_rotate).
- *   Voz 2: caida/encaje de pieza (blip grave) y linea completada (snd_line).
- *   Voz 3: subir de nivel (bono) y game over. Ademas, su oscilador de ruido
- *          ($D41B) se usa como generador de numeros aleatorios (snd_random).
+ * ARQUITECTURA (3 voces con secuencias independientes, sin bloqueos):
+ *   Voz 1: melodia y arpegios -> PULSO con PWM animado.
+ *   Voz 2: bajo / acordes     -> TRIANGULO.
+ *   Voz 3: solo aleatoriedad ($D41B, oscilador de ruido).
+ *
+ * Cada efecto es una pequena melodia de 1-6 notas que avanza sola desde
+ * snd_update(). El juego no se detiene esperando al sonido.
  * ============================================================================
  */
 
@@ -26,22 +28,25 @@
 /* Inicializa el SID: silencia las 3 voces, volumen master al maximo. */
 void snd_init(void);
 
-/* Efectos. Todos son no bloqueantes: disparan la voz y suenan solos. */
-void snd_move(void);      /* tic corto al mover/rotar la pieza   */
-void snd_drop(void);      /* blip grave al encajar/caer la pieza  */
-void snd_line(void);      /* tono de linea completada             */
-void snd_level(void);     /* tono corto al subir de nivel         */
-void snd_over(void);      /* tono grave de fin de partida         */
+/* Efectos (no bloqueantes: disparan la secuencia y suenan solos).
+ * Todos llevan dos capas: melodia (pulso animado) + bajo (triangulo). */
+void snd_move(void);      /* click corto al mover/rotar la pieza   */
+void snd_land(void);      /* click grave al tocar el suelo        */
+void snd_drop(void);      /* golpe al fijar (encajar) la pieza    */
+void snd_line(void);      /* arpegio ascendente al completar linea */
+void snd_level(void);     /* arpegio corto al subir de nivel       */
+void snd_over(void);      /* melodia descendente de fin de partida */
+
+/* Melodia de introduccion (melodia + bajo). */
+void snd_jingle(void);
 
 /* Apaga todas las voces (al salir o cambiar de estado). */
 void snd_silence(void);
 
-/* Devuelve un byte pseudoaleatorio del SID.
- * El core implementa la lectura del oscilador de la voz 3 ($D41B, "OSC3 random"):
- * se pone la voz 3 en modo RUIDO (sin gate, para no sonar) y se lee su registro. */
+/* Byte pseudoaleatorio del SID (oscilador de ruido de la voz 3, $D41B). */
 uint8_t snd_random(void);
 
-/* Tick por frame: gestiona las envolventes de los efectos. */
+/* Tick por frame: avanza las secuencias y el PWM. */
 void snd_update(void);
 
 #endif /* SOUND_H */

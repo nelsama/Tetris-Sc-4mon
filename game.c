@@ -284,7 +284,6 @@ static const char *diff_label(uint8_t i) {
 /* Temporizacion (en frames). */
 static uint8_t  drop_tick;      /* contador hasta la siguiente caida           */
 static uint8_t  lock_delay;     /* frames con la pieza apoyada (para ajustar)  */
-static uint8_t  was_grounded;   /* 1 = la pieza estaba apoyada el frame anterior */
 static uint8_t  lock_resets;    /* reinicios del lock permitidos (al mover/rotar) */
 
 /* Lock delay: al apoyarse, la pieza espera LOCK_DELAY frames antes de fijarse.
@@ -982,7 +981,6 @@ static void game_reset(void) {
 
     drop_tick  = 0;
     lock_delay = 0;
-    was_grounded = 0;
     lock_resets = 0;
 
     hud_draw();
@@ -1074,11 +1072,13 @@ static void lock_and_next(void) {
     uint8_t n;
 
     lock_piece();
+    snd_drop();          /* golpe grave: la pieza queda fija */
 
-    /* Si hay lineas completas: parpadean y luego colapsan. */
+    /* Si hay lineas completas: parpadean y luego colapsan. (El sonido de linea
+     * se lanza DESPUES de la animacion para que coincida con el borrado.) */
     if (mark_full_rows()) {
-        snd_line();
         flash_lines();
+        snd_line();
     }
     n = clear_lines();
     if (n) score_lines(n);
@@ -1177,11 +1177,6 @@ static uint8_t play_game(void) {
         grounded = (uint8_t)(!piece_fits(cur_type, cur_rot, cur_x,
                                          (int8_t)(cur_y + 1)));
 
-        /* Golpe de aterrizaje: suena EN CUANTO la pieza toca el suelo (flanco
-         * 0->1), no al fijarla. Asi el sonido coincide con lo que se ve. */
-        if (grounded && !was_grounded) snd_drop();
-        was_grounded = grounded;
-
         if (act_drop) {
             /* Soft drop: baja mas rapido mientras se mantiene. */
             if (try_down()) {
@@ -1191,9 +1186,14 @@ static uint8_t play_game(void) {
             act_drop = 0;
         }
 
+        /* Recalcular SIEMPRE aqui (tras soft drop o gravedad): el contacto se
+         * detecta en el MISMO frame en que la pieza baja y toca el suelo. */
+        grounded = (uint8_t)(!piece_fits(cur_type, cur_rot, cur_x,
+                                         (int8_t)(cur_y + 1)));
+
         if (grounded) {
-            /* Pieza apoyada: espera LOCK_DELAY frames antes de fijarla. Mover o
-             * rotar reinicia el contador (reset_lock), para poder ajustarla. */
+            /* Un solo click, en el frame de contacto (lock_delay a cero). */
+            if (lock_delay == 0) snd_land();
             lock_delay++;
         } else {
             lock_delay = 0;
@@ -1214,7 +1214,9 @@ static uint8_t play_game(void) {
          * la animacion usa su propio vc_wait_vblank() (no se puede anidar). */
         if (grounded && lock_delay >= LOCK_DELAY) {
             lock_and_next();
-            was_grounded = 0;   /* la nueva pieza aun no esta apoyada */
+            /* Los sonidos lanzados por el lock (encaje/linea/game over) deben
+             * empezar YA, no en el frame siguiente. */
+            snd_update();
         }
     }
 
@@ -1319,6 +1321,9 @@ static uint8_t title_screen(void) {
     put_str_pal(5, 10, "IZQ/DER: mover   ABAJO: bajar", PAL_UI); /* 29 -> 5 */
     put_str_pal(9, 11, "BOTON/W/ESPACIO: rotar", PAL_UI);        /* 22 -> 9 */
 
+    /* Melodia de introduccion (no bloqueante: avanza en snd_update). */
+    snd_jingle();
+
     /* Menu de dificultad. */
     draw_diff_menu(difficulty, 1);
 
@@ -1326,6 +1331,7 @@ static uint8_t title_screen(void) {
      * que el boton que disparo el game over inicie la partida de golpe). */
     while (joy_read() & (JOY_A_FIRE | JOY_A_LEFT | JOY_A_RIGHT)) {
         vc_wait_vblank();
+        snd_update();
         vc_wait_vblank_end();
     }
     while (rom_uart_rx_ready()) (void)rom_uart_getc();
@@ -1357,6 +1363,7 @@ static uint8_t title_screen(void) {
                 sel_shown = sel_on;
             }
             hold++;
+            snd_update();
             vc_wait_vblank_end();
 
             /* Menu: elegir dificultad + empezar / salir. */
@@ -1411,8 +1418,8 @@ int main(void) {
     for (;;) {
         if (!play_game()) break;    /* salio con Q durante la partida */
 
-        /* Fin de partida (GAME OVER). */
-        snd_silence();
+        /* Fin de partida (GAME OVER). - NO silenciar aqui: la melodia de
+         * snd_over() sigue sonando y se avanza en los bucles de espera. */
         hs_insert(score, lines);
 
         /* Panel de fin de partida: dibujo de transicion (fuera del VBLANK). */
@@ -1435,6 +1442,7 @@ int main(void) {
             uint8_t d;
             for (d = 0; d < 20; d++) {
                 vc_wait_vblank();
+                snd_update();
                 vc_wait_vblank_end();
             }
         }
@@ -1447,6 +1455,7 @@ int main(void) {
 
             if (!rom_uart_rx_ready()) {
                 vc_wait_vblank();
+                snd_update();
                 vc_wait_vblank_end();
                 continue;
             }

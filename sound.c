@@ -5,55 +5,96 @@
  * Acceso directo a los registros del SID en $D400-$D41F.
  *
  * FORMATO DE REGISTROS (por voz, base = $D400 + 7*voz):
- *   FREQ_LO  = base+0   frecuencia, bits 7:0
- *   FREQ_HI  = base+1   frecuencia, bits 15:8
- *   PW_LO    = base+2   ancho de pulso, bits 7:0
- *   PW_HI    = base+3   ancho de pulso, bits 11:8
- *   CTRL     = base+4   bit0 gate | bit1 sync | bit2 ring | bit3 test |
- *                       bits7:4 waveform (pulse/tri/saw/noise)
- *   AD       = base+5   ataque (nibble alto) / decay (nibble bajo)
- *   SR       = base+6   sustain (nibble alto) / release (nibble bajo)
+ *   FREQ_LO = +0  FREQ_HI = +1  PW_LO = +2  PW_HI = +3
+ *   CTRL    = +4  (gate | sync | ring | test | forma de onda en bits 7:4)
+ *   AD      = +5  (attack/decay)   SR = +6  (sustain/release)
+ *   $D418 MODE_VOL  bits3:0 = volumen master
  *
- *   $D418 MODE_VOL  bits3:0 = volumen master (0-15)
+ * ARQUITECTURA: 3 voces, cada una con su propia secuencia de pasos que avanza
+ * sola por frame (no se bloquea el juego):
+ *   Voz 1 = melodia / arpegios (PULSO con PWM animado)
+ *   Voz 2 = bajo / acordes     (TRIANGULO)
+ *   Voz 3 = percusion          (RUIDO)  <- tambien da la aleatoriedad
  *
- * MODELO DE SONIDO: cada efecto es "percutivo" (ataque rapido + decay/release),
- * asi que en cada frame comprobamos si la nota sigue viva con un temporizador
- * y, al agotarse, bajamos el GATE (dejando que el release la apague).
+ * Se aprovechan capacidades del SID: ADSR por nota, forma de onda distinta por
+ * voz, PWM (ancho de pulso modulado) y capas simultaneas melodia+bajo.
  * ============================================================================
  */
 
 #include <stdint.h>
 #include "sound.h"
 
-/* Registros del SID (escritura directa). */
 #define SID_V1      0xD400
 #define SID_V2      0xD407
 #define SID_V3      0xD40E
 #define SID_MODE_VOL (*(volatile uint8_t *)0xD418)
-
-/* Registro de LECTURA del oscilador de la voz 3 ($D41B). Con la voz 3 en modo
- * RUIDO es el generador pseudoaleatorio del SID (LFSR de 23 bits): basta leer
- * sus bits para obtener numeros aleatorios. */
 #define SID_V3_OSC  (*(volatile uint8_t *)0xD41B)
 
-/* Formas de onda (bits 7:4 de CTRL). */
 #define WF_TRI      0x10
-#define WF_SAW      0x20
 #define WF_PULSE    0x40
 #define WF_NOISE    0x80
 #define GATE        0x01
 
-/* Duraciones (en frames) de los efectos con temporizador. */
-#define TIC_FRAMES    3   /* tic al mover/rotar              */
-#define DROP_FRAMES   6   /* blip al encajar/caer la pieza   */
-#define LINE_FRAMES  12   /* linea completada                */
-#define LEVEL_FRAMES 10   /* subir de nivel                  */
-#define OVER_FRAMES  40   /* fin de partida (descenso grave) */
+/* Notas (frecuencias del SID). */
+#define N_F2 0x0208
+#define N_A2 0x0292
+#define N_C3 0x0310
+#define N_F3 0x0411
+#define N_G3 0x0490
+#define N_A3 0x0517
+#define N_C4 0x0620
+#define N_E4 0x07BA
+#define N_G4 0x0930
+#define N_C5 0x0C44
+#define N_E5 0x0F80
+#define N_G5 0x1313
 
 /* ===========================================================================
- * ESCRITURA DE REGISTROS
+ * TABLAS DE SECUENCIAS
  * =========================================================================== */
 
+/* Jingle: melodia y bajo (mismo patron de duraciones). */
+static const uint16_t jg_mel[]  = { N_C4, N_E4, N_G4, N_C5, N_E4, N_C4 };
+static const uint16_t jg_bass[] = { N_C3, N_C3, N_G3, N_G3, N_C4, N_C4 };
+static const uint8_t  jg_d[]    = { 8, 8, 8, 12, 8, 14 };
+
+/* Game over: descendente. */
+static const uint16_t go_mel[]  = { N_E4, N_C4, N_A3, N_F3 };
+static const uint16_t go_bass[] = { N_C3, N_A2, N_F2, N_F2 };
+static const uint8_t  go_d[]    = { 12, 12, 12, 24 };
+
+/* Linea: arpegio ascendente + bajo. */
+static const uint16_t ln_mel[]  = { N_C5, N_E5, N_G5 };
+static const uint16_t ln_bass[] = { N_C4, N_G4, N_C5 };
+static const uint8_t  ln_d[]    = { 2, 2, 10 };
+
+/* Encaje: una nota grave corta (reutiliza una tabla de 1 paso). */
+static const uint16_t dp_mel[]   = { N_E4 };
+static const uint16_t dp_bass[]  = { N_C3 };
+static const uint8_t  dp_d[]     = { 3 };
+
+/* ===========================================================================
+ * ESTADO
+ * =========================================================================== */
+
+/* Voz 1 (melodia): tabla activa, posicion y tiempo. */
+static const uint16_t *m_f;
+static const uint8_t  *m_d;
+static uint8_t         m_len, m_idx, m_t, m_on;
+
+/* Voz 2 (bajo). */
+static const uint16_t *b_f;
+static const uint8_t  *b_d;
+static uint8_t b_len, b_idx, b_t, b_on;
+
+/* Voz 3 (efectos cortos: click de mover/rotar). NO comparte con la melodia,
+ * asi el aterrizaje/movimiento nunca corta una melodia en curso. */
+static uint8_t e_t;      /* frames restantes del efecto */
+
+/* PWM de la voz 1. */
+static uint8_t pw_val, pw_dir;
+
+/* --- Escritura de registros --- */
 static void sid_wr(uint16_t addr, uint8_t v) {
     *(volatile uint8_t *)addr = v;
 }
@@ -63,21 +104,24 @@ static void sid_freq(uint16_t base, uint16_t f) {
     sid_wr(base + 1, (uint8_t)(f >> 8));
 }
 
-static void sid_pw(uint16_t base, uint16_t pw) {
-    sid_wr(base + 2, (uint8_t)(pw & 0xFF));
-    sid_wr(base + 3, (uint8_t)(pw >> 8));
+/* --- Arranque de un canal de melodia/bajo --- */
+static void mel_start(const uint16_t *f, const uint8_t *d, uint8_t len) {
+    m_f = f; m_d = d; m_len = len; m_idx = 0; m_t = d[0]; m_on = 1;
+    sid_wr(SID_V1 + 5, 0x09);
+    sid_wr(SID_V1 + 6, 0x96);
+    sid_freq(SID_V1, f[0]);
+    sid_wr(SID_V1 + 2, pw_val);
+    sid_wr(SID_V1 + 3, 0x08);
+    sid_wr(SID_V1 + 4, (uint8_t)(WF_PULSE | GATE));
 }
 
-/* ===========================================================================
- * ESTADO (un temporizador por voz; 0 = libre)
- * =========================================================================== */
-static uint8_t  t_v1;          /* mover / rotar            */
-static uint8_t  t_v2;          /* encajar / linea          */
-static uint8_t  t_v3;          /* nivel / game over        */
-static uint16_t v2_freq;       /* frecuencia actual (para el sweep) */
-static uint8_t  v2_is_line;    /* 1 = la voz 2 suena "linea" (no "drop") */
-static uint16_t v3_freq;       /* para el descenso de game over     */
-static uint8_t  v3_is_over;    /* 1 = la voz 3 suena game over      */
+static void bass_start(const uint16_t *f, const uint8_t *d, uint8_t len) {
+    b_f = f; b_d = d; b_len = len; b_idx = 0; b_t = d[0]; b_on = 1;
+    sid_wr(SID_V2 + 5, 0x09);
+    sid_wr(SID_V2 + 6, 0xA9);
+    sid_freq(SID_V2, f[0]);
+    sid_wr(SID_V2 + 4, (uint8_t)(WF_TRI | GATE));
+}
 
 /* ===========================================================================
  * API
@@ -91,121 +135,133 @@ void snd_init(void) {
     sid_wr(SID_V2 + 5, 0); sid_wr(SID_V2 + 6, 0);
     sid_wr(SID_V3 + 5, 0); sid_wr(SID_V3 + 6, 0);
     SID_MODE_VOL = 0x0F;       /* filtro off + volumen master maximo */
-    t_v1 = t_v2 = t_v3 = 0;
-    v2_freq = 0; v2_is_line = 0;
-    v3_freq = 0; v3_is_over = 0;
+    m_on = b_on = 0;
+    m_len = m_idx = m_t = 0;
+    b_len = b_idx = b_t = 0;
+    e_t = 0;
+    pw_val = 0x80; pw_dir = 1;
 }
 
 void snd_silence(void) {
     sid_wr(SID_V1 + 4, 0);
     sid_wr(SID_V2 + 4, 0);
     sid_wr(SID_V3 + 4, 0);
-    t_v1 = t_v2 = t_v3 = 0;
+    m_on = b_on = 0;
+    e_t = 0;
 }
 
-/* Byte pseudoaleatorio a partir del oscilador de ruido de la voz 3 ($D41B).
- * El LFSR del SID avanza a la frecuencia del oscilador, asi que a frecuencia
- * alta cada lectura da bits nuevos. Se pone la voz 3 en modo RUIDO SIN gate
- * (no suena) y se toman 8 bits del registro del oscilador. */
 uint8_t snd_random(void) {
     uint8_t out;
-
-    /* Ruido a la frecuencia mas alta posible, sin gate (silencioso). */
     sid_freq(SID_V3, 0xFFFF);
     sid_wr(SID_V3 + 4, WF_NOISE);
-
-    /* El LFSR avanza solo; una lectura ya mezcla bits frescos. */
     out = SID_V3_OSC;
-
-    /* Deja la voz 3 apagada. */
     sid_wr(SID_V3 + 4, 0);
     return out;
 }
 
-/* Tic corto al mover/rotar la pieza (voz 1). */
-void snd_move(void) {
-    sid_wr(SID_V1 + 5, 0x08);      /* ataque 0, decay 8 (percutivo) */
-    sid_wr(SID_V1 + 6, 0x00);      /* sustain 0, release 0          */
-    sid_pw(SID_V1, 0x0400);        /* pulso ~25%                    */
-    sid_freq(SID_V1, 0x0700);      /* grave (~110 Hz)               */
-    sid_wr(SID_V1 + 4, WF_PULSE | GATE);
-    t_v1 = TIC_FRAMES;
+/* Jingle: melodia (pulso) + bajo (triangulo). */
+void snd_jingle(void) {
+    mel_start(jg_mel, jg_d, 6);
+    bass_start(jg_bass, jg_d, 6);
 }
 
-/* Blip al encajar la pieza (voz 2), con sweep descendente. */
-void snd_drop(void) {
-    sid_wr(SID_V2 + 5, 0x04);      /* ataque 0, decay 4 */
-    sid_wr(SID_V2 + 6, 0x00);
-    sid_pw(SID_V2, 0x0800);        /* pulso ~50% */
-    sid_freq(SID_V2, 0x5000);
-    sid_wr(SID_V2 + 4, WF_PULSE | GATE);
-    v2_freq    = 0x5000;
-    v2_is_line = 0;
-    t_v2       = DROP_FRAMES;
-}
-
-/* Linea completada: tono agudo y brillante (voz 2, triangular con sweep). */
-void snd_line(void) {
-    sid_wr(SID_V2 + 5, 0x06);      /* ataque 0, decay 6 */
-    sid_wr(SID_V2 + 6, 0x00);
-    sid_freq(SID_V2, 0x2000);
-    sid_wr(SID_V2 + 4, WF_TRI | GATE);
-    v2_freq    = 0x2000;
-    v2_is_line = 1;
-    t_v2       = LINE_FRAMES;
-}
-
-/* Subir de nivel: tono triangular corto (voz 3). */
-void snd_level(void) {
-    sid_wr(SID_V3 + 5, 0x09);
-    sid_wr(SID_V3 + 6, 0x00);
-    sid_freq(SID_V3, 0x5800);
-    sid_wr(SID_V3 + 4, WF_TRI | GATE);
-    v3_is_over = 0;
-    t_v3       = LEVEL_FRAMES;
-}
-
-/* Fin de partida: descenso grave y largo (voz 3, pulso). */
-void snd_over(void) {
-    sid_wr(SID_V3 + 5, 0x0A);      /* ataque 0, decay 10 */
-    sid_wr(SID_V3 + 6, 0x00);
-    sid_pw(SID_V3, 0x0800);
-    sid_freq(SID_V3, 0x7000);
+/* Click seco en la voz 3 (mover, rotar o tocar el suelo). 'freq' y 'pw' fijan
+ * el timbre: agudo/fino para el movimiento, grave/redondo para el contacto. */
+static void click3(uint16_t freq, uint8_t pw, uint8_t frames) {
+    sid_wr(SID_V3 + 5, 0x08);           /* attack 0, decay 8: sin silbido */
+    sid_wr(SID_V3 + 6, 0x00);           /* sustain 0, release 0 */
+    sid_wr(SID_V3 + 2, 0x00);
+    sid_wr(SID_V3 + 3, pw);
+    sid_freq(SID_V3, freq);
     sid_wr(SID_V3 + 4, WF_PULSE | GATE);
-    v3_freq    = 0x7000;
-    v3_is_over = 1;
-    t_v3       = OVER_FRAMES;
+    e_t = frames;
 }
 
-/* Un "tick" por frame: gestiona las notas percutivas y los sweeps. */
+/* Click fino al mover/rotar (VOZ 3: no pisa la melodia ni el bajo). */
+void snd_move(void) {
+    click3(0x1200, 0x04, 2);
+}
+
+/* Contacto con el suelo: grave y con cuerpo, para que se perciba el golpe. */
+void snd_land(void) {
+    click3(0x0400, 0x08, 4);
+}
+
+/* Encaje: nota grave corta + bajo. Suena AUNQUE haya melodia (no la corta,
+ * porque usa las voces 1 y 2 solo si estan libres; si no, solo el bajo). */
+void snd_drop(void) {
+    if (!m_on) mel_start(dp_mel, dp_d, 1);
+    if (!b_on) bass_start(dp_bass, dp_d, 1);
+}
+
+/* Linea completada / subida de nivel: arpegio ascendente + bajo. */
+void snd_line(void) {
+    mel_start(ln_mel, ln_d, 3);
+    bass_start(ln_bass, ln_d, 3);
+}
+void snd_level(void) {
+    snd_line();
+}
+
+/* Game over: melodia descendente + bajo grave. */
+void snd_over(void) {
+    mel_start(go_mel, go_d, 4);
+    bass_start(go_bass, go_d, 4);
+}
+
+/* ===========================================================================
+ * TICK POR FRAME
+ * =========================================================================== */
+
 void snd_update(void) {
-    /* Voz 1: tic de mover/rotar. */
-    if (t_v1) {
-        t_v1--;
-        if (t_v1 == 0) sid_wr(SID_V1 + 4, 0);
+    /* Efecto corto de la voz 3 (click de mover/rotar). */
+    if (e_t) {
+        e_t--;
+        if (e_t == 0) sid_wr(SID_V3 + 4, 0);
     }
 
-    /* Voz 2: encajar (sweep descendente) o linea (sweep ascendente). */
-    if (t_v2) {
-        t_v2--;
-        if (t_v2 == 0) {
-            sid_wr(SID_V2 + 4, v2_is_line ? 0 : WF_PULSE);
-            v2_is_line = 0;
-        } else if (v2_is_line) {
-            if (v2_freq < 0x7800) { v2_freq += 0x0300; sid_freq(SID_V2, v2_freq); }
+    /* PWM de la melodia mientras suena: el timbre "respira". */
+    if (m_on) {
+        if (pw_dir) {
+            pw_val += 2;
+            if (pw_val >= 0xB0) pw_dir = 0;
         } else {
-            if (v2_freq > 0x0A00) { v2_freq -= 0x0600; sid_freq(SID_V2, v2_freq); }
+            pw_val -= 2;
+            if (pw_val <= 0x50) pw_dir = 1;
         }
     }
 
-    /* Voz 3: nivel (corto) o game over (descenso grave). */
-    if (t_v3) {
-        t_v3--;
-        if (t_v3 == 0) {
-            sid_wr(SID_V3 + 4, 0);
-            v3_is_over = 0;
-        } else if (v3_is_over) {
-            if (v3_freq > 0x0900) { v3_freq -= 0x0280; sid_freq(SID_V3, v3_freq); }
+    /* Voz 1: melodia. */
+    if (m_on) {
+        if (m_t) m_t--;
+        if (m_t == 0) {
+            m_idx++;
+            if (m_idx >= m_len) {
+                m_on = 0;
+                sid_wr(SID_V1 + 4, WF_PULSE);
+            } else {
+                m_t = m_d[m_idx];
+                sid_freq(SID_V1, m_f[m_idx]);
+                sid_wr(SID_V1 + 2, pw_val);
+                sid_wr(SID_V1 + 3, 0x08);
+                sid_wr(SID_V1 + 4, WF_PULSE | GATE);
+            }
+        }
+    }
+
+    /* Voz 2: bajo. */
+    if (b_on) {
+        if (b_t) b_t--;
+        if (b_t == 0) {
+            b_idx++;
+            if (b_idx >= b_len) {
+                b_on = 0;
+                sid_wr(SID_V2 + 4, WF_TRI);
+            } else {
+                b_t = b_d[b_idx];
+                sid_freq(SID_V2, b_f[b_idx]);
+                sid_wr(SID_V2 + 4, WF_TRI | GATE);
+            }
         }
     }
 }

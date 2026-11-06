@@ -172,19 +172,36 @@ Cada torre son **2 tiles de ancho**, con este reparto vertical:
 ### Sonido (SID 6581, compatible C64)
 
 El juego usa el **SID** mapeado en `$D400-$D41F`. Driver en `sound.c` /
-`include/sound.h`. Voces:
+`include/sound.h`.
 
-| Voz | Uso |
-|-----|-----|
-| 1 | tic al mover/rotar |
-| 2 | encaje de pieza (blip grave) y línea completada (tono agudo) |
-| 3 | subir de nivel y **game over** |
+| Voz | Uso | Forma de onda |
+|-----|-----|---------------|
+| 1 | melodía / arpegios (jingle, línea, nivel, encaje, game over) | pulso con **PWM animado** |
+| 2 | bajo de esos mismos efectos | triángulo |
+| 3 | **clicks** al mover/rotar y al tocar el suelo + aleatoriedad | pulso corto / ruido |
 
-El volumen master se fija a máximo (`$D418 = 0x0F`, filtro desactivado).
-`snd_update()` se llama una vez por frame para gestionar las envolventes.
+**Eventos y su sonido:**
 
-> La **voz 3** (oscilador de ruido) también se usa como fuente de aleatoriedad
-> (`snd_random()`, registro `$D41B`, "OSC3 random") para sembrar el RNG.
+| Evento | Cuándo | Sonido |
+|--------|--------|--------|
+| **Mover / rotar** | al aceptarse el movimiento | click fino y seco (2 frames) |
+| **Tocar el suelo** | flanco al apoyarse (aún sin fijar) | click grave apagado (3 frames) |
+| **Fijar (encajar)** | a los ~30 frames de lock | golpe grave + bajo |
+| **Línea** | tras el parpadeo, al colapsar | arpegio ascendente + bajo |
+| **Subir de nivel** | cada 10 líneas | mismo arpegio |
+| **Game over** | la pieza nueva no cabe | melodía descendente + bajo |
+| **Jingle** | al entrar al menú | melodía + bajo |
+
+Los **clicks usan la voz 3**, así que nunca cortan una melodía en curso; los
+efectos con melodía usan las voces 1 y 2 y **no se pisan** entre sí (cada voz
+solo se reasigna si está libre).
+
+El **PWM animado** mueve el ancho de pulso de la voz melódica cada frame, lo que
+da un timbre "vivo" que el SID no logra con un ancho fijo. El volumen master se
+fija al máximo (`$D418 = 0x0F`, filtro desactivado).
+
+> La **voz 3** se usa como fuente de aleatoriedad (`snd_random()`, registro
+> `$D41B`, "OSC3 random") para sembrar el RNG.
 
 ### Entrada: joystick Atari (DB9) + teclado UART
 
