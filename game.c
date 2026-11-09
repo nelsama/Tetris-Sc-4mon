@@ -1254,57 +1254,79 @@ static uint8_t play_game(void) {
  * =========================================================================== */
 
 /* Resultado de menu_input(). */
-#define MR_NONE   0
-#define MR_START  1
-#define MR_QUIT   2
-#define MR_LEFT   3
-#define MR_RIGHT  4
+#define MR_NONE     0
+#define MR_START    1
+#define MR_QUIT     2
+#define MR_LEFT     3
+#define MR_RIGHT    4
+#define MR_MONITOR  5   /* salir: vuelve al launcher (autoboot, como Q) */
+
+/* Seleccion del menu: 0..2 = dificultad, 3 = SALIR. */
+#define MENU_QUIT_ITEM  DIFF_COUNT
 
 static void draw_diff_menu(uint8_t sel, uint8_t on);
 
-/* Lee la entrada del menu de dificultad (joystick + teclado). Devuelve:
- * MR_LEFT/MR_RIGHT para cambiar la dificultad, MR_START para empezar, MR_QUIT
- * para salir. Actualiza 'difficulty' al cambiar. */
+/* Lee la entrada del menu (joystick + teclado). Devuelve:
+ *   MR_LEFT/MR_RIGHT -> mover la seleccion (dificultad o SALIR)
+ *   MR_START         -> empezar a jugar (si la seleccion es una dificultad)
+ *   MR_MONITOR       -> salir al launcher (autoboot), sea cual sea la seleccion
+ *   MR_QUIT          -> salir siempre (tecla Q)
+ * La seleccion vive en 'menu_sel' (0..DIFF_COUNT). */
+static uint8_t menu_sel;   /* 0..2 = dificultad, 3 = SALIR */
+
+/* Dibuja un item del menu en (col,row). Si esta seleccionado se pinta en color
+ * vivo (parpadea) y con flechas a los lados. */
+static void draw_item(uint8_t col, uint8_t row, const char *txt, uint8_t len,
+                      uint8_t sel, uint8_t on) {
+    uint8_t p = (uint8_t)(on ? PAL_SEL : PAL_UI);
+
+    clear_str_at((uint8_t)(col - 1), row, 9);
+    if (sel) {
+        if (on) put_str_pal((uint8_t)(col - 1), row, ">", p);
+        put_str_pal(col, row, txt, p);
+        if (on) put_str_pal((uint8_t)(col + len), row, "<", p);
+    } else {
+        put_str_pal(col, row, txt, PAL_UI);
+    }
+}
+
 static uint8_t menu_input(void) {
     char c;
     uint8_t j = joy_read();
     uint8_t res = MR_NONE;
     static uint8_t prev = 0;
     uint8_t jp = (uint8_t)(j & (uint8_t)~prev);
+    int8_t  move = 0;          /* -1 izquierda, +1 derecha, 0 = nada */
 
-    if (jp & JOY_A_LEFT)  res = MR_LEFT;
-    if (jp & JOY_A_RIGHT) res = MR_RIGHT;
-    if (jp & JOY_A_FIRE)  res = MR_START;
+    if (jp & JOY_A_LEFT)  move = -1;
+    if (jp & JOY_A_RIGHT) move = 1;
+    /* El boton actua segun lo seleccionado: SALIR -> monitor, resto -> jugar. */
+    if (jp & JOY_A_FIRE)  res = (menu_sel == MENU_QUIT_ITEM) ? MR_MONITOR : MR_START;
     prev = j;
 
     while (rom_uart_rx_ready()) {
         c = rom_uart_getc();
-        switch (c) {
-            case 'a': case 'A': case '4': res = MR_LEFT;  break;
-            case 'd': case 'D': case '6': res = MR_RIGHT; break;
-            case ' ': case '\r': case '\n': case 'e': case 'E': res = MR_START; break;
-            case 'q': case 'Q': res = MR_QUIT; break;
-            default: break;
-        }
+        if (c == 'a' || c == 'A' || c == '4') move = -1;
+        else if (c == 'd' || c == 'D' || c == '6') move = 1;
+        else if (c == 'q' || c == 'Q') res = MR_QUIT;
+        else if (c == 'm' || c == 'M') res = MR_MONITOR;
+        else if (c == ' ' || c == '\r' || c == '\n' || c == 'e' || c == 'E')
+            res = (menu_sel == MENU_QUIT_ITEM) ? MR_MONITOR : MR_START;
     }
 
-    /* Aplica el cambio de dificultad y redibuja el menu. Suena un click (reusa
-     * snd_move) solo si la seleccion cambia de verdad. */
-    if (res == MR_LEFT && difficulty > 0) {
-        difficulty--;
-        draw_diff_menu(difficulty, 1);
-        snd_move();
-        res = MR_NONE;
-    } else if (res == MR_RIGHT && difficulty < DIFF_COUNT - 1) {
-        difficulty++;
-        draw_diff_menu(difficulty, 1);
+    /* Mueve la seleccion (con clic) si cambio de verdad. */
+    if ((move < 0 && menu_sel > 0) || (move > 0 && menu_sel < MENU_QUIT_ITEM)) {
+        menu_sel = (uint8_t)(menu_sel + move);
+        if (menu_sel < DIFF_COUNT) difficulty = menu_sel;
+        draw_diff_menu(menu_sel, 1);
         snd_move();
         res = MR_NONE;
     }
     return res;
 }
 
-/* Dibuja las 3 opciones de dificultad en una fila; 'sel' va resaltada. */
+/* Dibuja el menu: las 3 dificultades en una fila (17) y SALIR en la 20.
+ * 'sel' = item resaltado (0..3); 'on' = fase del parpadeo de la seleccion. */
 static void draw_diff_menu(uint8_t sel, uint8_t on) {
     uint8_t i;
     /* Columna inicial de cada opcion. Repartidas por toda la fila (40 cols)
@@ -1316,22 +1338,14 @@ static void draw_diff_menu(uint8_t sel, uint8_t on) {
     /* Etiqueta. */
     put_str_pal(15, 15, "DIFICULTAD", PAL_UI);
 
-    for (i = 0; i < DIFF_COUNT; i++) {
-        /* Borra la zona de la opcion (con sitio para las flechas). */
-        clear_str_at((uint8_t)(col[i] - 1), 17, 9);
-        if (i == sel) {
-            /* Resaltada: color vivo (parpadea) + flechas a los lados. */
-            uint8_t p = on ? PAL_SEL : PAL_UI;
-            if (on) put_str_pal((uint8_t)(col[i] - 1), 17, ">", p);
-            put_str_pal(col[i], 17, diff_label(i), p);
-            if (on) put_str_pal((uint8_t)(col[i] + len[i]), 17, "<", p);
-        } else {
-            put_str_pal(col[i], 17, diff_label(i), PAL_UI);
-        }
-    }
+    for (i = 0; i < DIFF_COUNT; i++)
+        draw_item(col[i], 17, diff_label(i), len[i], (uint8_t)(i == sel), on);
+
+    /* SALIR, en su propia fila con aire respecto al menu de dificultad. */
+    draw_item(17, 20, "SALIR", 5, (uint8_t)(sel == MENU_QUIT_ITEM), on);
 }
-/* Dibuja las 3 opciones de dificultad en una fila; 'sel' va resaltada. */
-/* Pantalla de titulo. Devuelve 1 = jugar, 0 = salir. */
+/* Pantalla de titulo. Devuelve 0 = salir (con autoboot), 1 = jugar,
+ * 2 = salir al prompt del monitor SIN autoboot. */
 static uint8_t title_screen(void) {
     /* Dibujo de transicion (fondo + textos): fuera del VBLANK. */
     draw_background();
@@ -1343,8 +1357,9 @@ static uint8_t title_screen(void) {
     /* Melodia de introduccion (no bloqueante: avanza en snd_update). */
     snd_jingle();
 
-    /* Menu de dificultad. */
-    draw_diff_menu(difficulty, 1);
+    /* Menu: dificultades + SALIR (seleccion navegable con joystick). */
+    menu_sel = difficulty;
+    draw_diff_menu(menu_sel, 1);
 
     /* Espera a que se SUELTE el boton/direccion antes de leer el menu (evita
      * que el boton que disparo el game over inicie la partida de golpe). */
@@ -1356,29 +1371,18 @@ static uint8_t title_screen(void) {
     while (rom_uart_rx_ready()) (void)rom_uart_getc();
 
     {
-        uint8_t  shown = 0xFF;
         uint16_t hold  = 0;
         uint8_t  sel_shown = 0xFF;   /* estado dibujado del parpadeo de seleccion */
 
         for (;;) {
             uint8_t rd;
-            uint8_t on = (uint8_t)((hold / 40) & 1);
             uint8_t sel_on = (uint8_t)((hold / 16) & 1);   /* parpadeo del menu */
 
             vc_wait_vblank();
 
-            /* Parpadeo del aviso de inicio. */
-            if (on != shown) {
-                if (on) {
-                    clear_str_at(11, 21, 18);
-                } else {
-                    put_str_pal(11, 21, "BOTON PARA EMPEZAR", PAL1);
-                }
-                shown = on;
-            }
             /* Parpadeo de la opcion seleccionada. */
             if (sel_on != sel_shown) {
-                draw_diff_menu(difficulty, sel_on);
+                draw_diff_menu(menu_sel, sel_on);
                 sel_shown = sel_on;
             }
             hold++;
@@ -1387,26 +1391,10 @@ static uint8_t title_screen(void) {
 
             /* Menu: elegir dificultad + empezar / salir. */
             rd = menu_input();
-            if (rd == MR_START) return 1;
-            if (rd == MR_QUIT)  return 0;
+            if (rd == MR_START)   return 1;
+            if (rd == MR_QUIT)    return 0;
+            if (rd == MR_MONITOR) return 2;   /* 2 = salir al prompt del monitor */
         }
-    }
-}
-
-/* ===========================================================================
- * DESPEDIDA
- * =========================================================================== */
-static void bye_screen(void) {
-    uint8_t i;
-
-    /* Dibujo de transicion (fuera del VBLANK). */
-    draw_background();
-    put_str_pal(11, 13, "GRACIAS POR JUGAR", PAL_UI);
-    put_str_pal(16, 15, "TETRIS 6502", PAL1);
-
-    for (i = 0; i < 80; i++) {
-        vc_wait_vblank();
-        vc_wait_vblank_end();
     }
 }
 
@@ -1423,19 +1411,17 @@ int main(void) {
     hs_reset();
     difficulty = 1;     /* dificultad por defecto: NORMAL */
 
-    if (!title_screen()) {
-        bye_screen();
-        snd_silence();
-        vc_wait_vblank();
-        vc_clear_oam();
-        vc_set_scroll_x(0);
-        vc_set_scroll_y(0);
-        rom_uart_puts("\r\nSaliendo al monitor...\r\n");
-        return 0;
-    }
+    /* Flag de AUTOBOOT del monitor ($C004 bit 0). 0 = ejecutar BOOT.INI,
+     * 0 = ejecutar BOOT.INI (autoboot), 1 = ir al prompt.
+     * Se deja a 0 (como el comando QB) para que SALIR vuelva al LAUNCHER que
+     * arranco el juego. */
+    *(volatile uint8_t *)0xC004 = 0x00;
 
     for (;;) {
-        if (!play_game()) break;    /* salio con Q durante la partida */
+        uint8_t r = title_screen();
+        if (r != 1) goto salir;        /* 0 = Q, 2 = SALIR: vuelven al launcher */
+
+        if (!play_game()) goto salir;  /* Q durante la partida */
 
         /* Fin de partida (GAME OVER). - NO silenciar aqui: la melodia de
          * snd_over() sigue sonando y se avanza en los bucles de espera. */
@@ -1483,12 +1469,11 @@ int main(void) {
             if (c == 'q' || c == 'Q') goto salir;
         }
 
-        /* Vuelve al menu de titulo (permite elegir dificultad otra vez). */
-        if (!title_screen()) goto salir;
+        /* Vuelve al menu de titulo (permite elegir dificultad otra vez).
+         * title_screen() puede pedir salir en cualquier vuelta. */
     }
 
 salir:
-    bye_screen();
     snd_silence();
     vc_wait_vblank();
     vc_clear_oam();

@@ -38,7 +38,7 @@ Se puede jugar con **joystick Atari (DB9)** o con **teclado UART**, en paralelo.
 | `s` / `2` / flecha ↓ | bajar (soft drop) |
 | `w` / `8` / flecha ↑ / espacio | rotar |
 | `p` | pausa (alterna) |
-| `q` | salir al monitor |
+| `q` | salir al monitor (desde cualquier pantalla) |
 | `r` | (en GAME OVER) volver al menú |
 
 Al mover a los lados o rotar hay **auto-repetición (DAS)**: mantener la dirección
@@ -46,8 +46,8 @@ un instante hace que la pieza siga moviéndose.
 
 ### Menú de dificultad
 
-Al arrancar (y tras cada GAME OVER) se muestra la pantalla de título con un
-**menú de dificultad** de 3 opciones:
+Al arrancar (y tras cada GAME OVER) se muestra la pantalla de título con el
+**menú** de opciones **FÁCIL / NORMAL / DIFÍCIL / SALIR**:
 
 ![Menú de dificultad](doc/img/tetris-menu.png)
 
@@ -65,10 +65,24 @@ Las tres se separan a propósito en **dos frentes**:
   mucho más cortos en DIFÍCIL, así que **no da tiempo a recolocar** la pieza
   apoyada y hay que planificar antes.
 
-- **Izquierda/Derecha** (joystick o `A`/`D`): cambia la opción (parpadea con
-  flechas `>` `<`).
-- **Botón / Espacio / Enter**: empieza la partida con la dificultad elegida.
-- **Q**: salir.
+- **Izquierda/Derecha** (joystick o `A`/`D`): mueve la selección entre las
+  opciones (parpadean con flechas `>` `<`).
+- **Botón / Espacio / Enter**: confirma la opción seleccionada. Sobre una
+  dificultad **empieza la partida**; sobre **SALIR**, vuelve al launcher.
+- **Q**: salir (autoboot).
+
+#### Volver al launcher (autoboot)
+
+La opción **SALIR** equivale al comando **`QB`** del monitor: escribe `0` en el
+flag de usuario **`$C004`** (bit 0) y vuelve al monitor, que **relee `BOOT.INI`**
+y ejecuta de nuevo el **launcher** desde el que se arrancó el juego.
+
+- **`SALIR`** en el menú (botón) → vuelve al launcher.
+- **`Q`** (menú o partida) → también sale por autoboot.
+
+> Si `BOOT.INI` apuntara al propio juego en vez de a un launcher, esto lo
+> relanzaría. Cambia `$C004` a `1` para que en su lugar aparezca el **prompt
+del monitor**.
 
 ### Reglas
 
